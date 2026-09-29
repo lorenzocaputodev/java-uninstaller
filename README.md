@@ -2,6 +2,8 @@
 
 # Java Uninstaller for Windows
 
+[![Release](https://img.shields.io/github/v/release/lorenzocaputodev/java-uninstaller)](https://github.com/lorenzocaputodev/java-uninstaller/releases/latest) [![License](https://img.shields.io/github/license/lorenzocaputodev/java-uninstaller)](LICENSE) ![Platform](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D4)
+
 Script for the **complete, automated removal of Java** from Windows 10 and Windows 11: it closes running processes, uninstalls packages, cleans up leftover folders, registry keys, the `JAVA_HOME` variable, and Java entries in `PATH`.
 
 ## 📦 Project files
