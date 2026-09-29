@@ -109,7 +109,7 @@ function Out-Log {
     }
 }
 
-function Write-Log {
+function Write-Status {
     param(
         [string]$Message,
         [ValidateSet('INFO', 'OK', 'WARN', 'ERR', 'SKIP', 'DRY')][string]$Level = 'INFO'
@@ -165,16 +165,16 @@ function Invoke-Change {
     param([string]$Description, [scriptblock]$Action)
 
     if ($DryRun) {
-        Write-Log "Would run: $Description" 'DRY'
+        Write-Status "Would run: $Description" 'DRY'
         return $true
     }
     try {
         $null = & $Action
-        Write-Log $Description 'OK'
+        Write-Status $Description 'OK'
         return $true
     }
     catch {
-        Write-Log "FAILED: $Description ($($_.Exception.Message))" 'WARN'
+        Write-Status "FAILED: $Description ($($_.Exception.Message))" 'WARN'
         return $false
     }
 }
@@ -326,17 +326,17 @@ function Invoke-EnvironmentCleanup {
     # would expand %VARIABLES% and rewrite PATH as a plain REG_SZ.
     $rawPath = $Key.GetValue('Path', $null, [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
     if (-not $rawPath) {
-        Write-Log "PATH ($ScopeName): empty or missing" 'SKIP'
+        Write-Status "PATH ($ScopeName): empty or missing" 'SKIP'
         return
     }
     $kind = $Key.GetValueKind('Path')
     $result = Get-CleanedPath -Path $rawPath -JavaHomes $JavaHomes
     $removed = @($result.Removed)
     if ($removed.Count -eq 0) {
-        Write-Log "PATH ($ScopeName): no Java entries found" 'INFO'
+        Write-Status "PATH ($ScopeName): no Java entries found" 'INFO'
         return
     }
-    foreach ($entry in $removed) { Write-Log "PATH ($ScopeName): '$entry'" 'INFO' }
+    foreach ($entry in $removed) { Write-Status "PATH ($ScopeName): '$entry'" 'INFO' }
     $null = Invoke-Change "Remove $($removed.Count) Java entries from PATH ($ScopeName)" {
         $Key.SetValue('Path', $result.Path, $kind)
     }
@@ -354,10 +354,10 @@ public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wP
         }
         $result = [UIntPtr]::Zero
         $null = [JavaUninstaller.NativeMethods]::SendMessageTimeout([IntPtr]0xFFFF, 0x001A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$result)
-        Write-Log 'Environment change broadcast to running applications' 'INFO'
+        Write-Status 'Environment change broadcast to running applications' 'INFO'
     }
     catch {
-        Write-Log "Could not broadcast the environment change ($($_.Exception.Message)); restart to apply it" 'WARN'
+        Write-Status "Could not broadcast the environment change ($($_.Exception.Message)); restart to apply it" 'WARN'
     }
 }
 
@@ -370,10 +370,10 @@ Out-Log "Running as: $env:USERDOMAIN\$env:USERNAME" 'DarkGray'
 
 if (-not (Test-IsAdministrator)) {
     if ($DryRun) {
-        Write-Log 'Not running as administrator: the preview may be incomplete' 'WARN'
+        Write-Status 'Not running as administrator: the preview may be incomplete' 'WARN'
     }
     else {
-        Write-Log 'Administrator privileges are required. Run uninstall-java.bat instead.' 'ERR'
+        Write-Status 'Administrator privileges are required. Run uninstall-java.bat instead.' 'ERR'
         exit 2
     }
 }
@@ -381,7 +381,7 @@ if (-not (Test-IsAdministrator)) {
 # 1) Backup ------------------------------------------------------
 Write-Step 1 'Backing up environment variables and Java registry keys'
 if ($DryRun) {
-    Write-Log 'No backup is created in dry-run mode' 'SKIP'
+    Write-Status 'No backup is created in dry-run mode' 'SKIP'
 }
 else {
     $script:BackupDir = Join-Path $script:LogDir ('uninstall-java-backup-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
@@ -401,17 +401,17 @@ else {
         }
     }
     if ($backupFailed) {
-        Write-Log 'Backup failed: aborting without touching the system.' 'ERR'
+        Write-Status 'Backup failed: aborting without touching the system.' 'ERR'
         exit 2
     }
-    Write-Log 'To restore, double-click the .reg files in the backup folder' 'INFO'
+    Write-Status 'To restore, double-click the .reg files in the backup folder' 'INFO'
 }
 
 # 2) Processes ---------------------------------------------------
 Write-Step 2 'Closing running Java processes'
 $running = @(Get-Process -Name $JavaProcessNames -ErrorAction SilentlyContinue)
 if ($running.Count -eq 0) {
-    Write-Log 'No Java process is running' 'INFO'
+    Write-Status 'No Java process is running' 'INFO'
 }
 foreach ($process in $running) {
     $location = if ($process.Path) { " - $($process.Path)" } else { '' }
@@ -423,7 +423,7 @@ foreach ($process in $running) {
 # 3) winget ------------------------------------------------------
 Write-Step 3 'Uninstalling known packages via winget'
 if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-    Write-Log 'winget is not available on this system' 'SKIP'
+    Write-Status 'winget is not available on this system' 'SKIP'
 }
 else {
     # "winget uninstall --name" fails when several packages match, so resolve exact IDs first.
@@ -434,7 +434,7 @@ else {
     }
     $wingetIds = @($wingetIds | Select-Object -Unique)
     if ($wingetIds.Count -eq 0) {
-        Write-Log 'No Java package known to winget is installed' 'INFO'
+        Write-Status 'No Java package known to winget is installed' 'INFO'
     }
     foreach ($id in $wingetIds) {
         $null = Invoke-Change "winget uninstall $id" {
@@ -450,11 +450,11 @@ Write-Step 4 'Uninstalling Java products found in the registry'
 $products = @(Get-JavaProduct)
 $uninstallFailed = $false
 if ($products.Count -eq 0) {
-    Write-Log 'No Java product found in Programs and Features' 'INFO'
+    Write-Status 'No Java product found in Programs and Features' 'INFO'
 }
 foreach ($product in $products) {
     $label = "$($product.Name) $($product.Version)".Trim()
-    Write-Log "Found: $label [$($product.Publisher)]" 'INFO'
+    Write-Status "Found: $label [$($product.Publisher)]" 'INFO'
 }
 foreach ($product in $products) {
     $command = Get-UninstallCommand $product
@@ -471,7 +471,7 @@ foreach ($product in $products) {
 }
 if ($products.Count -gt 0 -and -not $DryRun) {
     foreach ($left in @(Get-JavaProduct)) {
-        Write-Log "Still installed after uninstall: $($left.Name)" 'WARN'
+        Write-Status "Still installed after uninstall: $($left.Name)" 'WARN'
         $uninstallFailed = $true
     }
 }
@@ -479,7 +479,7 @@ if ($products.Count -gt 0 -and -not $DryRun) {
 # 5) Folders -----------------------------------------------------
 Write-Step 5 'Removing leftover folders'
 if ($uninstallFailed) {
-    Write-Log 'Skipped: some products could not be uninstalled (see warnings above); fix them and run again' 'SKIP'
+    Write-Status 'Skipped: some products could not be uninstalled (see warnings above); fix them and run again' 'SKIP'
 }
 else {
     $programFilesRoots = @($env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ } | Select-Object -Unique
@@ -495,7 +495,7 @@ else {
     $folders = @($folderPatterns | ForEach-Object { Get-Item -Path $_ -Force -ErrorAction SilentlyContinue } |
             Where-Object { $_.PSIsContainer })
     if ($folders.Count -eq 0) {
-        Write-Log 'No leftover Java folder found' 'INFO'
+        Write-Status 'No leftover Java folder found' 'INFO'
     }
     foreach ($folder in $folders) {
         $null = Invoke-Change "Delete folder $($folder.FullName)" {
@@ -507,12 +507,12 @@ else {
 # 6) Registry ----------------------------------------------------
 Write-Step 6 'Removing Java registry keys'
 if ($uninstallFailed) {
-    Write-Log 'Skipped: some products could not be uninstalled (see warnings above)' 'SKIP'
+    Write-Status 'Skipped: some products could not be uninstalled (see warnings above)' 'SKIP'
 }
 else {
     $existingKeys = @($RegistryKeysToRemove | Where-Object { Test-Path -LiteralPath $_ })
     if ($existingKeys.Count -eq 0) {
-        Write-Log 'No Java registry key found' 'INFO'
+        Write-Status 'No Java registry key found' 'INFO'
     }
     foreach ($key in $existingKeys) {
         $null = Invoke-Change "Delete registry key $key" { Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction Stop }
@@ -521,7 +521,7 @@ else {
 
 # 7) Environment -------------------------------------------------
 Write-Step 7 'Cleaning environment variables and PATH'
-Write-Log "User-level changes apply to the account running this script ($env:USERNAME)" 'INFO'
+Write-Status "User-level changes apply to the account running this script ($env:USERNAME)" 'INFO'
 $scopes = @(
     @{ Name = 'Machine'; Hive = [Microsoft.Win32.Registry]::LocalMachine; SubKey = 'SYSTEM\CurrentControlSet\Control\Session Manager\Environment' },
     @{ Name = 'User'; Hive = [Microsoft.Win32.Registry]::CurrentUser; SubKey = 'Environment' }
@@ -540,7 +540,7 @@ foreach ($scope in $scopes) {
 foreach ($scope in $scopes) {
     $key = $scope.Hive.OpenSubKey($scope.SubKey, $writable)
     if (-not $key) {
-        Write-Log "Cannot open the $($scope.Name) environment key" 'WARN'
+        Write-Status "Cannot open the $($scope.Name) environment key" 'WARN'
         continue
     }
     try { Invoke-EnvironmentCleanup -Key $key -ScopeName $scope.Name -JavaHomes $javaHomes }
@@ -548,7 +548,7 @@ foreach ($scope in $scopes) {
 }
 foreach ($javaHome in ($javaHomes | Select-Object -Unique)) {
     if (Test-Path -LiteralPath $javaHome) {
-        Write-Log "The old JAVA_HOME folder still exists and was not touched: $javaHome" 'INFO'
+        Write-Status "The old JAVA_HOME folder still exists and was not touched: $javaHome" 'INFO'
     }
 }
 if ($script:EnvironmentChanged -and -not $DryRun) { Send-EnvironmentChange }
@@ -556,15 +556,15 @@ if ($script:EnvironmentChanged -and -not $DryRun) { Send-EnvironmentChange }
 # Summary --------------------------------------------------------
 Out-Log ''
 if ($DryRun) {
-    Write-Log 'Dry run completed: nothing was changed' 'INFO'
+    Write-Status 'Dry run completed: nothing was changed' 'INFO'
 }
 elseif ($script:RebootRequired) {
-    Write-Log 'A restart is required to complete the removal' 'INFO'
+    Write-Status 'A restart is required to complete the removal' 'INFO'
 }
-if ($script:BackupDir -and (Test-Path -LiteralPath $script:BackupDir)) { Write-Log "Backup: $($script:BackupDir)" 'INFO' }
-if ($script:LogFile) { Write-Log "Log: $($script:LogFile)" 'INFO' }
+if ($script:BackupDir -and (Test-Path -LiteralPath $script:BackupDir)) { Write-Status "Backup: $($script:BackupDir)" 'INFO' }
+if ($script:LogFile) { Write-Status "Log: $($script:LogFile)" 'INFO' }
 if ($script:WarningCount -gt 0) {
-    Write-Log "Completed with $($script:WarningCount) warning(s)" 'INFO'
+    Write-Status "Completed with $($script:WarningCount) warning(s)" 'INFO'
     exit 1
 }
 exit 0
