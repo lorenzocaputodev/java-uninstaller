@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Line endings and encoding
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in 'uninstall-java.bat', 'uninstall-java.ps1') {
+            $bytes = [IO.File]::ReadAllBytes($file)
+            $text = [Text.Encoding]::Latin1.GetString($bytes)
+            if ($text -match '(?<!\r)\n') { Write-Error "$file has LF-only line endings (CRLF required)"; $failed = $true }
+            if ($bytes | Where-Object { $_ -gt 127 }) { Write-Error "$file contains non-ASCII characters"; $failed = $true }
+          }
+          if ($failed) { exit 1 }
+
+      - name: PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Install-Module PSScriptAnalyzer -Force -Scope CurrentUser
+          $findings = @(Invoke-ScriptAnalyzer -Path . -Recurse -Severity Warning, Error)
+          $findings | Format-Table -AutoSize
+          if ($findings) { exit 1 }
+
+      - name: Unit tests
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File tests\uninstall-java.tests.ps1
+
+      - name: Dry run smoke test
+        shell: powershell
+        run: |
+          powershell -NoProfile -ExecutionPolicy Bypass -File uninstall-java.ps1 -DryRun
+          if ($LASTEXITCODE -gt 1) { exit $LASTEXITCODE }
