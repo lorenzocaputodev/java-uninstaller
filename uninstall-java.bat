@@ -1,9 +1,13 @@
 @echo off
-setlocal EnableDelayedExpansion
+setlocal
 :: ============================================================
 ::  uninstall-java.bat
 ::  Complete removal of Java from Windows 10 / Windows 11
 ::  Author: lorenzocaputodev
+::
+::  This launcher only handles administrator elevation and the
+::  user confirmation: the actual removal is performed by
+::  uninstall-java.ps1, which also writes the log and a backup.
 :: ============================================================
 
 :: --------------------------------------------------------------
@@ -14,104 +18,115 @@ setlocal EnableDelayedExpansion
 :: elevated privileges, it jumps straight to execution,
 :: guaranteeing the relaunch can happen at most once
 :: (no loop, under any circumstance).
+::
+:: fltmc only succeeds when elevated and, unlike "net session",
+:: does not depend on the Server service. The script path is
+:: passed through an environment variable so that quotes or
+:: apostrophes in the folder name cannot break the command.
 :: --------------------------------------------------------------
 if "%~1"=="ELEVATED" goto :main
 
-net session >nul 2>&1
+fltmc >nul 2>&1
 if %errorlevel% EQU 0 goto :main
 
 echo Requesting administrator privileges...
-powershell -NoProfile -Command "Start-Process -FilePath '%~f0' -ArgumentList 'ELEVATED' -Verb RunAs" >nul 2>&1
+set "JU_SELF=%~f0"
+powershell -NoProfile -Command "try { Start-Process -FilePath $env:JU_SELF -ArgumentList 'ELEVATED' -Verb RunAs -ErrorAction Stop } catch { exit 1 }" >nul 2>&1
+if errorlevel 1 goto :elevation_failed
 exit /B
+
+:elevation_failed
+echo.
+echo ERROR: administrator privileges are required, but the request
+echo was denied or could not be shown. Nothing has been changed.
+echo.
+pause
+exit /B 1
 
 
 :main
-pushd "%cd%"
-cd /D "%~dp0"
+set "PS1=%~dp0uninstall-java.ps1"
+if not exist "%PS1%" goto :missing_ps1
 
+:: --------------------------------------------------------------
+:: 2) Warning and confirmation
+:: --------------------------------------------------------------
 cls
 echo ============================================================
 echo         COMPLETE JAVA REMOVAL - Windows 10 / Windows 11
 echo ============================================================
 echo.
 echo WARNING: this script removes ALL installed Java versions
-echo (Oracle, OpenJDK, Temurin, Zulu, AdoptOpenJDK), cleans the
-echo registry, the JAVA_HOME variable, and Java-related entries
-echo in PATH.
+echo (Oracle, OpenJDK, Temurin, Zulu, Corretto, Liberica), their
+echo leftover folders, registry keys, the JAVA_HOME variable and
+echo Java entries in PATH.
 echo.
-set /p "CONFIRM=Do you want to continue? (Y/N): "
-if /I not "%CONFIRM%"=="Y" (
-    echo Operation cancelled by the user.
-    pause
-    exit /B
-)
+echo  - Every running Java process (java.exe, javaw.exe, ...) is
+echo    terminated forcefully: save your work first.
+echo  - A backup of the environment variables and of the Java
+echo    registry keys is saved next to this script.
+echo.
+echo    [Y] Uninstall Java
+echo    [D] Dry run: show what would be done, change nothing
+echo    [N] Cancel
+echo.
+choice /C YDN /N /M "Your choice: "
+if errorlevel 3 goto :cancelled
 
-set "LOGFILE=%~dp0uninstall-java-log.txt"
-echo Log started on %date% at %time% > "%LOGFILE%"
-
-:: --------------------------------------------------------------
-:: 2) Close any running Java processes
-:: --------------------------------------------------------------
-echo [1/5] Closing active Java processes...
-taskkill /F /IM java.exe   >nul 2>&1
-taskkill /F /IM javaw.exe  >nul 2>&1
-taskkill /F /IM javaws.exe >nul 2>&1
+set "PSARGS="
+if errorlevel 2 set "PSARGS=-DryRun"
 
 :: --------------------------------------------------------------
-:: 3) Uninstall via winget
+:: 3) Run the removal engine (it writes the log by itself)
 :: --------------------------------------------------------------
-echo [2/5] Uninstalling via winget...
-where winget >nul 2>&1
-if %errorlevel% EQU 0 (
-    winget uninstall --name "Java" --accept-source-agreements --disable-interactivity >> "%LOGFILE%" 2>&1
-    winget uninstall --name "OpenJDK" --accept-source-agreements --disable-interactivity >> "%LOGFILE%" 2>&1
-    winget uninstall --name "Eclipse Temurin" --accept-source-agreements --disable-interactivity >> "%LOGFILE%" 2>&1
-    winget uninstall --name "Zulu" --accept-source-agreements --disable-interactivity >> "%LOGFILE%" 2>&1
-) else (
-    echo winget is not available on this system, skipping this step. >> "%LOGFILE%"
-)
-
-:: --------------------------------------------------------------
-:: 4) Advanced uninstall (Get-Package, registry, PATH cleanup)
-::    via the external PowerShell module uninstall-java.ps1
-:: --------------------------------------------------------------
-echo [3/5] Advanced uninstall via PowerShell...
-if exist "%~dp0uninstall-java.ps1" (
-    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0uninstall-java.ps1" >> "%LOGFILE%" 2>&1
-) else (
-    echo WARNING: uninstall-java.ps1 not found in the script folder. >> "%LOGFILE%"
-    echo WARNING: uninstall-java.ps1 not found, some steps were skipped.
-)
-
-:: --------------------------------------------------------------
-:: 5) Remove leftover folders
-:: --------------------------------------------------------------
-echo [4/5] Removing leftover folders from disk...
-rmdir /s /q "%ProgramFiles%\Java" 2>nul
-if not "%ProgramFiles(x86)%"=="" rmdir /s /q "%ProgramFiles(x86)%\Java" 2>nul
-rmdir /s /q "%ProgramFiles%\Eclipse Adoptium" 2>nul
-rmdir /s /q "%ProgramFiles%\Zulu" 2>nul
-rmdir /s /q "%ProgramFiles%\AdoptOpenJDK" 2>nul
-rmdir /s /q "%ProgramData%\Oracle" 2>nul
-rmdir /s /q "%AppData%\Oracle\Java" 2>nul
-rmdir /s /q "%LocalAppData%\Oracle\Java" 2>nul
-
-:: --------------------------------------------------------------
-:: 6) Clean registry and JAVA_HOME variable
-:: --------------------------------------------------------------
-echo [5/5] Cleaning up the registry and JAVA_HOME...
-reg delete "HKLM\SOFTWARE\JavaSoft" /f >nul 2>&1
-reg delete "HKLM\SOFTWARE\WOW6432Node\JavaSoft" /f >nul 2>&1
-reg delete "HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment" /v JAVA_HOME /f >nul 2>&1
-reg delete "HKCU\Environment" /v JAVA_HOME /f >nul 2>&1
+echo.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS1%" %PSARGS%
+set "RC=%errorlevel%"
 
 echo.
 echo ============================================================
-echo  Done! Log saved to:
-echo  %LOGFILE%
-echo  It is recommended to restart your PC to apply the changes.
+if "%RC%"=="0" goto :finished_ok
+if "%RC%"=="1" goto :finished_warnings
+goto :finished_error
+
+:finished_ok
+if defined PSARGS goto :finished_dryrun
+echo  Done! Java has been removed.
+echo  Restarting your PC is recommended to apply all the changes.
 echo ============================================================
+goto :end
+
+:finished_dryrun
+echo  Dry run completed: nothing was changed.
+echo  Run this script again and choose [Y] to perform the removal.
+echo ============================================================
+goto :end
+
+:finished_warnings
+echo  Completed WITH WARNINGS.
+echo  Check the messages above and the log file.
+echo ============================================================
+goto :end
+
+:finished_error
+echo  The removal did not run (exit code %RC%).
+echo  Check the messages above.
+echo ============================================================
+goto :end
+
+:cancelled
 echo.
-popd
+echo Operation cancelled by the user.
+set "RC=0"
+goto :end
+
+:missing_ps1
+echo ERROR: uninstall-java.ps1 not found next to this script.
+echo Both files must be in the same folder. Nothing has been changed.
+set "RC=1"
+goto :end
+
+:end
+echo.
 pause
-endlocal
+exit /B %RC%
