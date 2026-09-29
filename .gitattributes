@@ -1,4 +1,15 @@
-*.bat text eol=crlf
-*.ps1 text eol=crlf
+# Default: let Git normalize text files.
+* text=auto
+
+# Windows scripts are stored with CRLF and never converted. A .bat with
+# bare LF line endings can break labels/goto, and users may download the
+# raw file instead of cloning, so the blob itself must already be CRLF.
+# (CI checks this.)
+*.bat -text
+*.ps1 -text
+
 *.md text
+*.yml text
 LICENSE text
+.gitignore text
+*.png binary
